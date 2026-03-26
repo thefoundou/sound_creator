@@ -21,13 +21,13 @@ from generators import SAMPLE_RATE
 # ── Palette ────────────────────────────────────────────────────────────────────
 BG      = "#141414"
 PANEL   = "#1e1e1e"
-SURFACE = "#282828"
-BORDER  = "#383838"
+SURFACE = "#3a3a3a"
+BORDER  = "#4a4a4a"
 TEXT    = "#e8e8e8"
 MUTED   = "#707070"
 SUCCESS = "#3dba6a"
 WARN    = "#e74c3c"
-DARK    = "#303030"
+DARK    = "#444444"
 KNOB_ARC = "#e8e8e8"
 
 FONT_SECTION = ("SF Pro Text",  8, "bold")

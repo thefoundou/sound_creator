@@ -229,9 +229,6 @@ class SoundGenUI:
         seq_hdr = tk.Frame(c, bg=PANEL)
         seq_hdr.pack(fill="x", pady=(0, 6))
         tk.Label(seq_hdr, text="Random Sequence", font=FONT_LABEL, bg=PANEL, fg=TEXT).pack(side="left")
-        tk.Label(seq_hdr, text="Chord Stacks", font=FONT_SMALL, bg=PANEL, fg=MUTED).pack(side="right", padx=(8, 0))
-        self.seq_chord_stacks_var = tk.BooleanVar(value=False)
-        Toggle(seq_hdr, self.seq_chord_stacks_var, bg=PANEL).pack(side="right")
 
         seq_row = tk.Frame(c, bg=PANEL)
         seq_row.pack(fill="x", pady=(0, 8))
@@ -267,10 +264,14 @@ class SoundGenUI:
         self.seq_velocity_var     = tk.DoubleVar(value=80.0)
         self.seq_vel_variance_var = tk.DoubleVar(value=15.0)
         self.seq_variance_var     = tk.DoubleVar(value=20.0)
+        self.seq_phrase_var       = tk.DoubleVar(value=50.0)
+        self.seq_accent_var       = tk.DoubleVar(value=40.0)
         for var, lbl in [(self.seq_swing_var,        "Swing"),
                          (self.seq_velocity_var,     "Velocity"),
                          (self.seq_vel_variance_var, "Vel Var"),
-                         (self.seq_variance_var,     "Len Var")]:
+                         (self.seq_variance_var,     "Len Var"),
+                         (self.seq_phrase_var,       "Phrase"),
+                         (self.seq_accent_var,       "Accent")]:
             Knob(knob_row, var, size=62, label=lbl, bg=PANEL).pack(side="left", padx=4)
 
         self._on_tuning_toggle()
@@ -674,10 +675,12 @@ class SoundGenUI:
             enabled = self._enabled_types()
             sound_type = random.choice(enabled) if enabled else None
 
-            swing        = self.seq_swing_var.get() / 100.0
-            velocity     = self.seq_velocity_var.get() / 100.0
-            vel_variance = self.seq_vel_variance_var.get() / 100.0
-            len_variance = self.seq_variance_var.get() / 100.0
+            swing          = self.seq_swing_var.get() / 100.0
+            velocity       = self.seq_velocity_var.get() / 100.0
+            vel_variance   = self.seq_vel_variance_var.get() / 100.0
+            len_variance   = self.seq_variance_var.get() / 100.0
+            phrase_contour = self.seq_phrase_var.get() / 100.0
+            accent_str     = self.seq_accent_var.get() / 100.0
 
             audio, seq_label = generate_random_sequence(
                 root_note, octave, scale_type, num_notes,
@@ -685,7 +688,7 @@ class SoundGenUI:
                 note_duration=note_duration,
                 swing=swing, velocity=velocity,
                 velocity_variance=vel_variance, note_variance=len_variance,
-                chord_stacks=self.seq_chord_stacks_var.get())
+                phrase_contour=phrase_contour, accent_strength=accent_str)
 
             wp = self._weird_params()
             if any(v > 0 for v in wp.values()):
