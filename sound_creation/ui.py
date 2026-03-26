@@ -229,6 +229,9 @@ class SoundGenUI:
         seq_hdr = tk.Frame(c, bg=PANEL)
         seq_hdr.pack(fill="x", pady=(0, 6))
         tk.Label(seq_hdr, text="Random Sequence", font=FONT_LABEL, bg=PANEL, fg=TEXT).pack(side="left")
+        tk.Label(seq_hdr, text="Chord Stacks", font=FONT_SMALL, bg=PANEL, fg=MUTED).pack(side="right", padx=(8, 0))
+        self.seq_chord_stacks_var = tk.BooleanVar(value=False)
+        Toggle(seq_hdr, self.seq_chord_stacks_var, bg=PANEL).pack(side="right")
 
         seq_row = tk.Frame(c, bg=PANEL)
         seq_row.pack(fill="x", pady=(0, 8))
@@ -681,7 +684,8 @@ class SoundGenUI:
                 sound_type=sound_type, bpm=effective_bpm,
                 note_duration=note_duration,
                 swing=swing, velocity=velocity,
-                velocity_variance=vel_variance, note_variance=len_variance)
+                velocity_variance=vel_variance, note_variance=len_variance,
+                chord_stacks=self.seq_chord_stacks_var.get())
 
             wp = self._weird_params()
             if any(v > 0 for v in wp.values()):
