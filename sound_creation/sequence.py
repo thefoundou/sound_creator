@@ -11,7 +11,25 @@ from generators import GENERATORS, generate_sound, SAMPLE_RATE, note_to_freq
 
 def generate_sequence(notes_list, sound_type=None, sr=SAMPLE_RATE, bpm=None,
                       note_duration=None, swing=0.0, velocity=0.8,
-                      velocity_variance=0.15, note_variance=0.0):
+                      velocity_variance=0.15, note_variance=0.0,
+                      phrase_contour=0.0, accent_strength=0.0):
+    """
+    Generate a sequence of notes with swing, velocity, and duration variance.
+
+    notes_list        List of (freq_hz, duration_multiplier) tuples.
+                      freq_hz=None means a rest (silence for that slot).
+                      freq_hz may also be a list of frequencies (chord stack).
+                      duration_multiplier scales the base note_duration
+                      (1.0=normal, 1.5=dotted, 2.0=double).
+                      Plain float/int entries are treated as (freq, 1.0).
+    swing             0.0 = straight, 1.0 = heavy swing (odd notes pushed late)
+    velocity          0.0–1.0 base amplitude
+    velocity_variance 0.0–1.0 per-note velocity randomness (0=uniform, 1=±40 %)
+    note_variance     0.0–1.0 per-note duration spread (0=exact, 1=±50 %)
+    phrase_contour    0.0–1.0 phrase-aware velocity shaping + phrase-final
+                      lengthening (0=flat/off, 1=full arc + stretch)
+    accent_strength   0.0–1.0 metric accent on strong beats (assumes 4/4)
+    """
     if not notes_list:
         return np.array([], dtype=np.int16), "empty_sequence"
 
@@ -31,6 +49,36 @@ def generate_sequence(notes_list, sound_type=None, sr=SAMPLE_RATE, bpm=None,
     swing_delay = swing * 0.35 * base_dur
     fade_n      = min(int(0.008 * sr), 256)
 
+    # ── Phrase boundaries ─────────────────────────────────────────────────
+    # Split the note list into phrases of 4–8 notes for contour/lengthening.
+    total = len(notes_list)
+    phrase_breaks = set()       # indices that START a new phrase
+    if phrase_contour > 0 and total > 0:
+        pos = 0
+        while pos < total:
+            phrase_breaks.add(pos)
+            pos += random.randint(4, 8)
+    # Build a list of (phrase_start, phrase_len) spans
+    _breaks = sorted(phrase_breaks) if phrase_breaks else [0]
+    phrase_spans = []
+    for bi, start in enumerate(_breaks):
+        end = _breaks[bi + 1] if bi + 1 < len(_breaks) else total
+        phrase_spans.append((start, end - start))
+
+    def _phrase_of(idx):
+        """Return (position_in_phrase, phrase_length) for note *idx*."""
+        for start, length in phrase_spans:
+            if start <= idx < start + length:
+                return idx - start, length
+        return 0, 1
+
+    # ── Metric accent weights (4/4 assumed) ───────────────────────────────
+    # Beat 1 strongest, beat 3 secondary, beats 2 & 4 weakest.
+    _accent_pattern = [1.0, 0.7, 0.85, 0.7]
+    # Cumulative duration tracks beat position within a bar.
+    cum_dur = 0.0
+    bar_len = (4 * 60.0 / bpm) if bpm else None
+
     segments = []
     for i, entry in enumerate(notes_list):
         if isinstance(entry, (tuple, list)):
@@ -41,10 +89,19 @@ def generate_sequence(notes_list, sound_type=None, sr=SAMPLE_RATE, bpm=None,
         dur = max(0.04, base_dur * dur_mult
                   * (1.0 + note_variance * random.uniform(-0.5, 0.5)))
 
+        # ── Phrase-final lengthening ──────────────────────────────────────
+        if phrase_contour > 0:
+            pos_in_phrase, phr_len = _phrase_of(i)
+            if phr_len > 1 and pos_in_phrase == phr_len - 1:
+                dur *= 1.0 + 0.25 * phrase_contour
+            elif phr_len > 2 and pos_in_phrase == phr_len - 2:
+                dur *= 1.0 + 0.10 * phrase_contour
+
         if swing_delay > 0.001 and (i % 2 == 1):
             segments.append(np.zeros(int(swing_delay * sr), dtype=np.int16))
 
         if freq is None:
+            cum_dur += dur
             segments.append(np.zeros(int(dur * sr), dtype=np.int16))
             continue
 
@@ -70,9 +127,26 @@ def generate_sequence(notes_list, sound_type=None, sr=SAMPLE_RATE, bpm=None,
                                   root_freq=freq, bpm=bpm)
             note_audio_f = a.astype(np.float32)
 
+        # ── Velocity: random spread ───────────────────────────────────────
         vel_spread = velocity_variance * 0.40
-        vel = np.clip(velocity * (1.0 + random.uniform(-vel_spread, vel_spread)),
-                      0.02, 1.0)
+        vel = velocity * (1.0 + random.uniform(-vel_spread, vel_spread))
+
+        # ── Velocity: phrase contour (sine arc) ──────────────────────────
+        if phrase_contour > 0:
+            pos_in_phrase, phr_len = _phrase_of(i)
+            if phr_len > 1:
+                arc = math.sin(math.pi * pos_in_phrase / (phr_len - 1))
+                contour_scale = 1.0 - phrase_contour * 0.35 * (1.0 - arc)
+                vel *= contour_scale
+
+        # ── Velocity: metric accent ──────────────────────────────────────
+        if accent_strength > 0 and bar_len and bar_len > 0:
+            beat_pos = (cum_dur % bar_len) / (bar_len / 4.0)
+            beat_idx = int(beat_pos) % 4
+            accent_w = _accent_pattern[beat_idx]
+            vel *= 1.0 - accent_strength * (1.0 - accent_w)
+
+        vel = np.clip(vel, 0.02, 1.0)
         sig = note_audio_f * vel
 
         n = len(sig)
@@ -83,26 +157,120 @@ def generate_sequence(notes_list, sound_type=None, sr=SAMPLE_RATE, bpm=None,
             sig[-fn:] *= ramp[::-1]
 
         segments.append(np.clip(sig, -32767, 32767).astype(np.int16))
+        cum_dur += dur
 
     audio = np.concatenate(segments)
     label = f"sequence_{sound_type}_{len(notes_list)}"
     return audio, label
 
 
-def _apply_chord_stacks(notes, scale, root_freq_base):
+def _freq_to_midi(freq):
+    """Convert Hz to a continuous MIDI note number (69 = A4 = 440 Hz)."""
+    if freq <= 0:
+        return 0
+    return 69 + 12 * math.log2(freq / 440.0)
+
+
+def _midi_to_freq(midi):
+    """Convert MIDI note number back to Hz."""
+    return 440.0 * (2 ** ((midi - 69) / 12))
+
+
+def _build_chord_midi(root_midi, scale, best_deg, add_seventh):
     """
-    Convert every non-rest note to a diatonic chord stack.
-
-    For each note we find its closest scale degree, then build the triad using
-    the actual scale intervals for that degree — so a note on the ii degree of
-    C major gets a minor triad (3, 7), the vii° gets a diminished triad (3, 6),
-    etc., matching the voicing patterns found in real MIDI chord libraries.
-
-    About 25 % of chords also receive a diatonic 7th (shell voicing), in line
-    with the ~30 % seventh-chord rate observed in the reference MIDI library.
+    Build a chord as a list of MIDI note numbers in root position
+    (all voices above the root). Returns [root, 3rd, 5th] or
+    [root, 3rd, 5th, 7th].
     """
     n = len(scale)
+    semi_3rd = (scale[(best_deg + 2) % n] - scale[best_deg]) % 12
+    semi_5th = (scale[(best_deg + 4) % n] - scale[best_deg]) % 12
+    voices = [root_midi, root_midi + semi_3rd, root_midi + semi_5th]
+    if add_seventh and n >= 7:
+        semi_7th = (scale[(best_deg + 6) % n] - scale[best_deg]) % 12
+        voices.append(root_midi + semi_7th)
+    return voices
+
+
+def _generate_inversions(chord_midi):
+    """
+    Generate all inversions of a chord within a reasonable register.
+
+    For a triad [C4, E4, G4] this produces:
+      root position: [C4, E4, G4]
+      1st inversion: [E4, G4, C5]   (move root up an octave)
+      2nd inversion: [G4, C5, E5]   (move root+3rd up an octave)
+    Each inversion is then also shifted ±1 octave to give options in
+    different registers.
+    """
+    n = len(chord_midi)
+    inversions = []
+    # Build each inversion by rotating which note is the bass
+    current = list(chord_midi)
+    for _ in range(n):
+        inversions.append(sorted(current))
+        # Move the lowest note up an octave
+        current = [current[0] + 12] + current[1:]
+        current.sort()
+
+    # Also offer each inversion shifted ±12 semitones for register variety
+    expanded = []
+    for inv in inversions:
+        for shift in [-12, 0, 12]:
+            shifted = [m + shift for m in inv]
+            # Keep within playable range (MIDI 36=C2 to MIDI 96=C7)
+            if all(36 <= m <= 96 for m in shifted):
+                expanded.append(shifted)
+    return expanded
+
+
+def _voice_leading_cost(prev_voices, candidate_voices):
+    """
+    Compute the total voice-movement cost between two chords.
+
+    Uses nearest-voice assignment: for each voice in the candidate chord,
+    find the closest voice in the previous chord and sum the distances.
+    Penalises large leaps more than proportionally (squared distance)
+    so the algorithm strongly prefers small, smooth movements.
+    """
+    if not prev_voices:
+        # No previous chord — prefer voicings near the middle register
+        center = 60  # middle C
+        return sum((m - center) ** 2 for m in candidate_voices) * 0.01
+
+    cost = 0
+    prev_remaining = list(prev_voices)
+    for voice in sorted(candidate_voices):
+        if not prev_remaining:
+            cost += 144  # penalty for extra voice (12^2)
+            continue
+        # Find nearest previous voice
+        best_idx = min(range(len(prev_remaining)),
+                       key=lambda j: abs(prev_remaining[j] - voice))
+        dist = abs(prev_remaining[best_idx] - voice)
+        cost += dist * dist  # squared to penalise large jumps
+        prev_remaining.pop(best_idx)
+    return cost
+
+
+def _apply_chord_stacks(notes, scale, root_freq_base):
+    """
+    Convert every non-rest note to a diatonic chord stack with smooth
+    voice leading between consecutive chords.
+
+    Algorithm:
+      1. Build a diatonic triad (+ optional 7th) for each note's scale degree.
+      2. Generate all inversions of that chord in nearby registers.
+      3. Pick the inversion that minimises total voice movement from the
+         previous chord (squared-distance cost favours small, smooth steps).
+      4. Common tones are naturally retained because they have zero cost.
+
+    The first chord uses root position near the melody note's register.
+    """
+    n = len(scale)
+    prev_voices = []  # MIDI note numbers of the previous chord
     result = []
+
     for note in notes:
         if not (isinstance(note, tuple) and note[0] is not None
                 and not isinstance(note[0], list)):
@@ -110,8 +278,9 @@ def _apply_chord_stacks(notes, scale, root_freq_base):
             continue
 
         freq, dur_mult = note
+        root_midi = _freq_to_midi(freq)
 
-        # Find which scale degree this note sits on (compare semitones mod 12)
+        # Find closest scale degree
         semitones_from_root = round(12 * math.log2(freq / root_freq_base)) % 12
         best_deg = min(
             range(n),
@@ -121,22 +290,24 @@ def _apply_chord_stacks(notes, scale, root_freq_base):
             ),
         )
 
-        # Diatonic 3rd and 5th above this scale degree
-        semi_3rd = (scale[(best_deg + 2) % n] - scale[best_deg]) % 12
-        semi_5th = (scale[(best_deg + 4) % n] - scale[best_deg]) % 12
+        # ~25 % chance of diatonic 7th
+        add_seventh = (n >= 7 and random.random() < 0.25)
 
-        freqs = [
-            freq,
-            freq * 2 ** (semi_3rd / 12),
-            freq * 2 ** (semi_5th / 12),
-        ]
+        # Build root-position chord in MIDI space
+        chord_midi = _build_chord_midi(root_midi, scale, best_deg, add_seventh)
 
-        # ~25 % chance: add a diatonic 7th (shell voicing)
-        if n >= 7 and random.random() < 0.25:
-            semi_7th = (scale[(best_deg + 6) % n] - scale[best_deg]) % 12
-            freqs.append(freq * 2 ** (semi_7th / 12))
+        # Generate all inversions across nearby registers
+        candidates = _generate_inversions(chord_midi)
+        if not candidates:
+            candidates = [chord_midi]
 
+        # Pick the inversion with minimum voice-leading cost
+        best = min(candidates, key=lambda c: _voice_leading_cost(prev_voices, c))
+
+        prev_voices = best
+        freqs = [_midi_to_freq(m) for m in best]
         result.append((freqs, dur_mult))
+
     return result
 
 
@@ -162,9 +333,7 @@ def _find_passing_tone(scale, sem_a, sem_b):
     Returns the passing semitone, or None if no scale tone fits between them.
     """
     lo, hi = min(sem_a, sem_b), max(sem_a, sem_b)
-    # Look for scale tones strictly between the two chord tones
     candidates = [s for s in scale if lo < s < hi]
-    # Also check an octave up for wrapping intervals (e.g. B→C = 11→0)
     if not candidates and lo != hi:
         candidates = [s for s in scale if lo < s + 12 < hi + 12 and s != sem_a and s != sem_b]
     if candidates:
@@ -176,11 +345,6 @@ def _pick_contour(phrase_len):
     """
     Return a list of directional biases (-1, 0, +1) for each note in a phrase,
     forming an arch or valley shape.
-
-    arch:   rise in first half, fall in second half
-    valley: fall then rise
-    rise:   gradual ascent
-    fall:   gradual descent
     """
     shape = random.choices(["arch", "valley", "rise", "fall"],
                            weights=[0.40, 0.25, 0.20, 0.15])[0]
@@ -195,7 +359,6 @@ def _pick_contour(phrase_len):
             contour.append(1)
         else:
             contour.append(-1)
-    # Soften: the very first and last notes have no bias (landing points)
     contour[0] = 0
     contour[-1] = 0
     return contour
@@ -224,15 +387,12 @@ def _generate_motif(chord_semitones, scale, phrase_len, contour,
 
         # ── Duration variation ────────────────────────────────────────────
         if is_phrase_end:
-            # Phrase endings get longer notes for resolution feel
             dur_mult = random.choice([1.5, 2.0])
         else:
             r_dur = random.random()
             if r_dur < 0.08:
-                # Rest — but not on the first note of a phrase
                 if pos > 0:
                     notes.append((None, 1.0))
-                    # Advance chord_idx for next iteration before continuing
                     chord_idx, cur_oct = _advance_chord_idx(
                         chord_idx, cur_oct, nc, contour[pos], base_octave)
                     continue
@@ -245,26 +405,21 @@ def _generate_motif(chord_semitones, scale, phrase_len, contour,
 
         # ── Passing tone insertion on weak beats ──────────────────────────
         if is_weak_beat and random.random() < 0.30 and pos + 1 < phrase_len:
-            # Figure out the next chord tone we're heading toward
             next_chord_idx, next_oct = _advance_chord_idx(
                 chord_idx, cur_oct, nc, contour[pos], base_octave)
             next_sem = chord_semitones[next_chord_idx]
-            # Adjust for octave difference
             sem_a = sem + oct_offset * 12
             sem_b = next_sem + (next_oct - base_octave) * 12
             passing = _find_passing_tone(scale, sem_a % 12, sem_b % 12)
             if passing is not None:
-                # Use passing tone frequency in current octave
                 freq = _sem_to_freq(root_freq_base, passing, oct_offset)
-                notes.append((freq, 0.5))  # passing tones are short
+                notes.append((freq, 0.5))
                 chord_idx, cur_oct = next_chord_idx, next_oct
                 continue
 
         notes.append((freq, dur_mult))
 
-        # ── Phrase ending: bias toward root (idx 0) or 5th (idx 2) ────────
         if is_phrase_end:
-            # Don't advance — this is the landing note, next phrase picks up
             pass
         else:
             chord_idx, cur_oct = _advance_chord_idx(
@@ -322,7 +477,6 @@ def _vary_motif(motif_notes, chord_semitones, scale, root_freq_base,
 
     for freq, dur_mult in motif_notes:
         if freq is None:
-            # Keep rests
             varied.append((None, dur_mult))
             continue
 
@@ -330,27 +484,23 @@ def _vary_motif(motif_notes, chord_semitones, scale, root_freq_base,
         sem = chord_semitones[chord_idx]
 
         if random.random() < variation_amount:
-            # Shift by ±1 chord step
             shift = random.choice([-1, 1])
             new_idx = chord_idx + shift
             if 0 <= new_idx < nc:
                 chord_idx = new_idx
                 sem = chord_semitones[chord_idx]
-            # Occasional octave shift
             if random.random() < 0.15:
                 cur_oct = max(3, min(5, cur_oct + random.choice([-1, 1])))
                 oct_offset = cur_oct - base_octave
 
         new_freq = _sem_to_freq(root_freq_base, sem, oct_offset)
 
-        # Slight rhythmic variation — occasionally stretch or compress
         new_dur = dur_mult
         if random.random() < variation_amount * 0.5:
             new_dur = random.choice([0.5, 1.0, 1.5]) if dur_mult == 1.0 else dur_mult
 
         varied.append((new_freq, new_dur))
 
-        # Advance for next note
         step = random.choice([-1, 0, 1])
         new_idx = chord_idx + step
         if 0 <= new_idx < nc:
@@ -362,11 +512,10 @@ def _vary_motif(motif_notes, chord_semitones, scale, root_freq_base,
 def _resolve_to_chord_tone(chord_semitones, root_freq_base, base_octave, cur_oct):
     """Pick a resolution note — biased toward root (idx 0) or 5th (idx 2)."""
     nc = len(chord_semitones)
-    # Weight root and 5th heavily
     weights = [1.0] * nc
-    weights[0] = 5.0                     # root
+    weights[0] = 5.0
     if nc > 2:
-        weights[2] = 3.0                 # 5th (3rd stacked third)
+        weights[2] = 3.0
     total = sum(weights)
     weights = [w / total for w in weights]
 
@@ -382,24 +531,21 @@ def _resolve_to_chord_tone(chord_semitones, root_freq_base, base_octave, cur_oct
 def generate_random_sequence(root_note, octave, scale_type, num_notes, sound_type=None,
                               sr=SAMPLE_RATE, bpm=None, note_duration=None,
                               swing=0.0, velocity=0.8, velocity_variance=0.15,
-                              note_variance=0.0, chord_stacks=False):
+                              note_variance=0.0, chord_stacks=False,
+                              phrase_contour=0.0, accent_strength=0.0):
     """
-    Generate a melodic sequence with three improvements over pure random walk:
+    Generate a melodic sequence with improvements over pure random walk:
 
     1. **Phrase structure with resolution** — notes are grouped into 4-or-8-note
-       phrases. Each phrase ends on a chord tone biased toward root or 5th,
-       giving the melody periodic points of rest and resolution.
+       phrases. Each phrase ends on a chord tone biased toward root or 5th.
 
     2. **Motif repetition** — the first phrase generates a melodic/rhythmic motif.
-       Subsequent phrases repeat and vary that motif (transposed, with small
-       pitch and rhythm mutations), so the melody sounds intentional.
+       Subsequent phrases repeat and vary that motif.
 
     3. **Passing tones** — on weak beats, there is a ~30 % chance of inserting a
-       scale tone that sits between two consecutive chord tones, smoothing out
-       the "hoppy" sound of pure chord-tone melodies.
+       scale tone between consecutive chord tones.
 
-    Contour shaping (arch, valley, rise, fall) biases each phrase's direction
-    so melodies have audible shape rather than flat random movement.
+    Contour shaping (arch, valley, rise, fall) biases each phrase's direction.
     """
     MAJOR = [0, 2, 4, 5, 7, 9, 11]
     MINOR = [0, 2, 3, 5, 7, 8, 10]
@@ -429,21 +575,17 @@ def generate_random_sequence(root_note, octave, scale_type, num_notes, sound_typ
         contour = _pick_contour(plen)
 
         if phrase_i == 0:
-            # ── First phrase: generate the seed motif ─────────────────────
             phrase_notes, chord_idx, cur_oct = _generate_motif(
                 chord_semitones, scale, plen, contour,
                 root_freq_base, octave, chord_idx, cur_oct)
             motif = phrase_notes
         else:
-            # ── Later phrases: vary the motif ─────────────────────────────
-            # Decide how to handle this phrase
             action = random.choices(
                 ["repeat", "vary", "new"],
                 weights=[0.25, 0.50, 0.25]
             )[0]
 
             if action == "repeat" and motif:
-                # Transpose the motif to start from current position
                 phrase_notes, chord_idx, cur_oct = _vary_motif(
                     motif, chord_semitones, scale, root_freq_base,
                     octave, chord_idx, cur_oct, variation_amount=0.10)
@@ -452,7 +594,6 @@ def generate_random_sequence(root_note, octave, scale_type, num_notes, sound_typ
                     motif, chord_semitones, scale, root_freq_base,
                     octave, chord_idx, cur_oct, variation_amount=0.35)
             else:
-                # Fresh phrase (still shaped by contour)
                 phrase_notes, chord_idx, cur_oct = _generate_motif(
                     chord_semitones, scale, plen, contour,
                     root_freq_base, octave, chord_idx, cur_oct)
@@ -461,7 +602,6 @@ def generate_random_sequence(root_note, octave, scale_type, num_notes, sound_typ
         if len(phrase_notes) >= 2 and phrase_notes[-1][0] is not None:
             res_freq, res_idx = _resolve_to_chord_tone(
                 chord_semitones, root_freq_base, octave, cur_oct)
-            # Keep the duration from the generated note, replace pitch
             phrase_notes[-1] = (res_freq, phrase_notes[-1][1])
             chord_idx = res_idx
 
@@ -476,7 +616,9 @@ def generate_random_sequence(root_note, octave, scale_type, num_notes, sound_typ
                                  note_duration=note_duration,
                                  swing=swing, velocity=velocity,
                                  velocity_variance=velocity_variance,
-                                 note_variance=note_variance)
+                                 note_variance=note_variance,
+                                 phrase_contour=phrase_contour,
+                                 accent_strength=accent_strength)
     chord_name = f"deg{chord_degs[0]}"
     label = f"seq_{scale_type}_{root_note}{octave}_{chord_name}_{num_notes}"
     return audio, label

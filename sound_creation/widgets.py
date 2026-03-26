@@ -9,12 +9,22 @@ import time
 import os
 import numpy as np
 
+import sys
+
 try:
     from PIL import Image as _PILImage, ImageDraw as _PILDraw
     from PIL import ImageFilter as _PILFilter, ImageTk as _PILImageTk
     _PIL_OK = True
 except ImportError:
     _PIL_OK = False
+
+# On macOS, tk.Button ignores bg/fg. tkmacosx.Button respects them.
+_MACOS = sys.platform == "darwin"
+try:
+    from tkmacosx import Button as _MacButton
+    _MACBTN_OK = _MACOS
+except ImportError:
+    _MACBTN_OK = False
 
 from generators import SAMPLE_RATE
 
@@ -37,6 +47,32 @@ FONT_TINY    = ("SF Pro Text",  8)
 FONT_MONO    = ("SF Mono",     10)
 FONT_BTN     = ("SF Pro Text", 11, "bold")
 FONT_TITLE   = ("SF Pro Display", 15, "bold")
+
+
+# ── Dark-mode Button ──────────────────────────────────────────────────────────
+
+def DarkButton(parent, text="", bg=DARK, fg=TEXT, font=FONT_BTN,
+               activebackground=None, activeforeground=None,
+               command=None, state="normal", padx=14, pady=7, **kw):
+    """
+    Create a button that actually respects bg/fg on macOS.
+    Falls back to tk.Button on other platforms.
+    """
+    abg = activebackground or bg
+    afg = activeforeground or fg
+    if _MACBTN_OK:
+        btn = _MacButton(
+            parent, text=text, bg=bg, fg=fg, font=font,
+            activebackground=abg, activeforeground=afg,
+            borderless=True, command=command, state=state,
+            cursor="hand2", padx=padx, pady=pady, **kw)
+    else:
+        btn = tk.Button(
+            parent, text=text, bg=bg, fg=fg, font=font,
+            activebackground=abg, activeforeground=afg,
+            relief="flat", bd=0, command=command, state=state,
+            cursor="hand2", padx=padx, pady=pady, **kw)
+    return btn
 
 
 # ── Dancing Man animation ──────────────────────────────────────────────────────
