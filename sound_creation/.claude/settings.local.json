@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python3 -c \":*)",
+      "Bash(python3 -c \"from ui import SoundGenUI; print\\(''OK''\\)\")",
+      "Bash(python3 -c \"from PIL import Image; print\\(''Pillow available''\\)\")"
+    ]
+  }
+}
