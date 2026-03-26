@@ -15,6 +15,7 @@ from widgets import (
     BG, PANEL, SURFACE, BORDER, TEXT, MUTED, SUCCESS, WARN, DARK, KNOB_ARC,
     FONT_SECTION, FONT_LABEL, FONT_SMALL, FONT_TINY, FONT_MONO, FONT_BTN, FONT_TITLE,
     DancingMan, Knob, WeirdifyCanvas, Toggle, WaveformView, card, divider,
+    DarkButton,
 )
 from generate_sounds import (
     GENERATORS, generate_sound,
@@ -110,10 +111,9 @@ class SoundGenUI:
         ctrl = tk.Frame(c, bg=PANEL)
         ctrl.pack(fill="x", pady=(0, 10))
         for txt, cmd in [("All", self._select_all), ("None", self._select_none)]:
-            tk.Button(ctrl, text=txt, font=FONT_TINY, bg=SURFACE, fg=TEXT,
-                      relief="flat", cursor="hand2", bd=0, padx=10, pady=3,
-                      highlightthickness=1, highlightbackground=BORDER,
-                      command=cmd).pack(side="left", padx=(0, 6))
+            DarkButton(ctrl, text=txt, font=FONT_TINY, bg=SURFACE, fg=TEXT,
+                       activebackground=BORDER, command=cmd,
+                       padx=10, pady=3).pack(side="left", padx=(0, 6))
 
         self.type_vars = {}
         labels = {
@@ -229,6 +229,9 @@ class SoundGenUI:
         seq_hdr = tk.Frame(c, bg=PANEL)
         seq_hdr.pack(fill="x", pady=(0, 6))
         tk.Label(seq_hdr, text="Random Sequence", font=FONT_LABEL, bg=PANEL, fg=TEXT).pack(side="left")
+        tk.Label(seq_hdr, text="Chord Stacks", font=FONT_SMALL, bg=PANEL, fg=MUTED).pack(side="right", padx=(8, 0))
+        self.seq_chord_stacks_var = tk.BooleanVar(value=False)
+        Toggle(seq_hdr, self.seq_chord_stacks_var, bg=PANEL).pack(side="right")
 
         seq_row = tk.Frame(c, bg=PANEL)
         seq_row.pack(fill="x", pady=(0, 8))
@@ -252,10 +255,10 @@ class SoundGenUI:
         self._style_menu(note_menu)
         note_menu.pack(side="left", padx=(0, 12))
 
-        self.generate_sequence_btn = tk.Button(seq_row, text="Generate Sequence",
-                                               bg=SURFACE, fg=TEXT, font=FONT_BTN,
-                                               activebackground=BORDER, activeforeground=TEXT,
-                                               command=self._generate_sequence_preview)
+        self.generate_sequence_btn = DarkButton(seq_row, text="Generate Sequence",
+                                                bg=SURFACE, fg=TEXT,
+                                                activebackground=BORDER,
+                                                command=self._generate_sequence_preview)
         self.generate_sequence_btn.pack(side="left")
 
         knob_row = tk.Frame(c, bg=PANEL)
@@ -326,10 +329,9 @@ class SoundGenUI:
                  bg=PANEL, fg=TEXT).pack(side="left")
         tk.Label(hdr, text="warp the timbre", font=FONT_TINY,
                  bg=PANEL, fg=MUTED).pack(side="left", padx=(8, 0))
-        tk.Button(hdr, text="Reset", font=FONT_TINY, bg=SURFACE, fg=MUTED,
-                  relief="flat", cursor="hand2", bd=0, padx=8, pady=2,
-                  highlightthickness=1, highlightbackground=BORDER,
-                  command=self._reset_weird).pack(side="right")
+        DarkButton(hdr, text="Reset", font=FONT_TINY, bg=SURFACE, fg=MUTED,
+                   activebackground=BORDER, command=self._reset_weird,
+                   padx=8, pady=2).pack(side="right")
 
         knob_row = tk.Frame(c, bg=PANEL)
         knob_row.pack()
@@ -377,10 +379,9 @@ class SoundGenUI:
         Knob(knob_row, self.resample_reuse_var, size=62,
              label="Chop Reuse", bg=PANEL).pack(side="left", padx=4)
 
-        self.resample_btn = tk.Button(
-            knob_row, text="Resample", bg=SURFACE, fg=TEXT, font=FONT_BTN,
-            activebackground=BORDER, activeforeground=TEXT,
-            command=self._do_resample)
+        self.resample_btn = DarkButton(
+            knob_row, text="Resample", bg=SURFACE, fg=TEXT,
+            activebackground=BORDER, command=self._do_resample)
         self.resample_btn.pack(side="left", padx=(16, 0), pady=20)
 
     def _do_resample(self):
@@ -477,19 +478,14 @@ class SoundGenUI:
         btn_row.pack(fill="x")
 
         def dark_btn(parent, text, command, state="normal"):
-            return tk.Button(parent, text=text, font=FONT_BTN,
-                             bg=DARK, fg=TEXT, relief="flat",
-                             cursor="hand2", bd=0, padx=14, pady=7,
-                             state=state, command=command,
-                             activebackground="#484848", activeforeground=TEXT)
+            return DarkButton(parent, text=text, bg=DARK, fg=TEXT,
+                              activebackground="#484848", state=state,
+                              command=command)
 
         def light_btn(parent, text, command, state="normal"):
-            return tk.Button(parent, text=text, font=FONT_BTN,
-                             bg=SURFACE, fg=TEXT, relief="flat",
-                             cursor="hand2", bd=0, padx=14, pady=7,
-                             state=state, command=command,
-                             highlightthickness=1, highlightbackground=BORDER,
-                             activebackground=BORDER, activeforeground=TEXT)
+            return DarkButton(parent, text=text, bg=SURFACE, fg=TEXT,
+                              activebackground=BORDER, state=state,
+                              command=command)
 
         self.preview_btn = dark_btn(btn_row, "▶  Preview", self._start_preview)
         self.preview_btn.pack(side="left", padx=(0, 8))
@@ -509,11 +505,10 @@ class SoundGenUI:
         btn_row2 = tk.Frame(c, bg=PANEL)
         btn_row2.pack(fill="x", pady=(8, 0))
 
-        self.pleasantize_btn = tk.Button(
-            btn_row2, text="✦  Pleasantize", font=FONT_BTN,
-            bg="#2d6e45", fg=TEXT, relief="flat", cursor="hand2",
-            bd=0, padx=14, pady=7, state="disabled",
-            activebackground="#3a8a56", activeforeground=TEXT,
+        self.pleasantize_btn = DarkButton(
+            btn_row2, text="✦  Pleasantize",
+            bg="#2d6e45", fg=TEXT, state="disabled",
+            activebackground="#3a8a56",
             command=self._do_pleasantize,
         )
         self.pleasantize_btn.pack(side="left")
@@ -537,30 +532,26 @@ class SoundGenUI:
         row = tk.Frame(parent, bg=BG)
         row.pack(fill="x")
 
-        self.gen_btn = tk.Button(
-            row, text="Generate Sounds", font=FONT_BTN,
-            bg=DARK, fg=TEXT, relief="flat", cursor="hand2",
-            bd=0, padx=20, pady=10,
-            activebackground="#484848", activeforeground=TEXT,
+        self.gen_btn = DarkButton(
+            row, text="Generate Sounds",
+            bg=DARK, fg=TEXT, padx=20, pady=10,
+            activebackground="#484848",
             command=self._start_generation,
         )
         self.gen_btn.pack(side="left", fill="x", expand=True, padx=(0, 8))
 
-        self.cancel_gen_btn = tk.Button(
-            row, text="Stop", font=FONT_BTN,
-            bg=WARN, fg=TEXT, relief="flat", cursor="hand2",
-            bd=0, padx=16, pady=10, state="disabled",
-            activebackground="#c0392b", activeforeground=TEXT,
+        self.cancel_gen_btn = DarkButton(
+            row, text="Stop",
+            bg=WARN, fg=TEXT, padx=16, pady=10, state="disabled",
+            activebackground="#c0392b",
             command=self._cancel_generation,
         )
         self.cancel_gen_btn.pack(side="left", padx=(0, 8))
 
-        tk.Button(
-            row, text="Clear Log", font=FONT_BTN,
-            bg=SURFACE, fg=TEXT, relief="flat", cursor="hand2",
-            bd=0, padx=20, pady=10,
-            highlightthickness=1, highlightbackground=BORDER,
-            activebackground=BORDER, activeforeground=TEXT,
+        DarkButton(
+            row, text="Clear Log",
+            bg=SURFACE, fg=TEXT, padx=20, pady=10,
+            activebackground=BORDER,
             command=self._clear_log,
         ).pack(side="left")
 
@@ -688,6 +679,7 @@ class SoundGenUI:
                 note_duration=note_duration,
                 swing=swing, velocity=velocity,
                 velocity_variance=vel_variance, note_variance=len_variance,
+                chord_stacks=self.seq_chord_stacks_var.get(),
                 phrase_contour=phrase_contour, accent_strength=accent_str)
 
             wp = self._weird_params()
