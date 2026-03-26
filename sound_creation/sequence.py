@@ -102,10 +102,8 @@ def _apply_chord_stacks(notes, chord_semitones):
         interval_5th = 7
 
     result = []
-    for i, note in enumerate(notes):
-        if (isinstance(note, tuple) and note[0] is not None
-                and not isinstance(note[0], list)
-                and i % 2 == 0 and random.random() < 0.50):
+    for note in notes:
+        if isinstance(note, tuple) and note[0] is not None and not isinstance(note[0], list):
             freq, dur_mult = note
             third = freq * 2 ** (interval_3rd / 12)
             fifth = freq * 2 ** (interval_5th / 12)
