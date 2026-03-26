@@ -47,13 +47,32 @@ def generate_sequence(notes_list, sound_type=None, sr=SAMPLE_RATE, bpm=None,
             segments.append(np.zeros(int(dur * sr), dtype=np.int16))
             continue
 
-        note_audio, _ = generate_sound(sound_type, sr=sr, duration=dur,
-                                       root_freq=freq, bpm=bpm)
+        if isinstance(freq, list):
+            # Chord stack: mix audio for each frequency in the list
+            freqs = [f for f in freq if f is not None]
+            if not freqs:
+                segments.append(np.zeros(int(dur * sr), dtype=np.int16))
+                continue
+            stack_signals = []
+            for f in freqs:
+                a, _ = generate_sound(sound_type, sr=sr, duration=dur,
+                                      root_freq=f, bpm=bpm)
+                stack_signals.append(a.astype(np.float32))
+            max_len = max(len(s) for s in stack_signals)
+            mixed = np.zeros(max_len, dtype=np.float32)
+            for s in stack_signals:
+                mixed[:len(s)] += s
+            mixed /= len(stack_signals)
+            note_audio_f = mixed
+        else:
+            a, _ = generate_sound(sound_type, sr=sr, duration=dur,
+                                  root_freq=freq, bpm=bpm)
+            note_audio_f = a.astype(np.float32)
 
         vel_spread = velocity_variance * 0.40
         vel = np.clip(velocity * (1.0 + random.uniform(-vel_spread, vel_spread)),
                       0.02, 1.0)
-        sig = note_audio.astype(np.float32) * vel
+        sig = note_audio_f * vel
 
         n = len(sig)
         fn = min(fade_n, n // 4)
@@ -67,6 +86,33 @@ def generate_sequence(notes_list, sound_type=None, sr=SAMPLE_RATE, bpm=None,
     audio = np.concatenate(segments)
     label = f"sequence_{sound_type}_{len(notes_list)}"
     return audio, label
+
+
+def _apply_chord_stacks(notes, chord_semitones):
+    """
+    Post-process a notes list, converting some single-note entries to chord stacks.
+    On strong beats (~50% chance) a note becomes ([root, 3rd, 5th], dur_mult),
+    using the intervals derived from chord_semitones.
+    """
+    nc = len(chord_semitones)
+    # Derive 3rd and 5th intervals from the chord's semitone pattern
+    interval_3rd = (chord_semitones[1 % nc] - chord_semitones[0]) % 12 or 4
+    interval_5th = (chord_semitones[2 % nc] - chord_semitones[0]) % 12
+    if interval_5th == 0 or interval_5th == interval_3rd:
+        interval_5th = 7
+
+    result = []
+    for i, note in enumerate(notes):
+        if (isinstance(note, tuple) and note[0] is not None
+                and not isinstance(note[0], list)
+                and i % 2 == 0 and random.random() < 0.50):
+            freq, dur_mult = note
+            third = freq * 2 ** (interval_3rd / 12)
+            fifth = freq * 2 ** (interval_5th / 12)
+            result.append(([freq, third, fifth], dur_mult))
+        else:
+            result.append(note)
+    return result
 
 
 def _pick_chord(scale, num_degrees=4):
@@ -311,7 +357,7 @@ def _resolve_to_chord_tone(chord_semitones, root_freq_base, base_octave, cur_oct
 def generate_random_sequence(root_note, octave, scale_type, num_notes, sound_type=None,
                               sr=SAMPLE_RATE, bpm=None, note_duration=None,
                               swing=0.0, velocity=0.8, velocity_variance=0.15,
-                              note_variance=0.0):
+                              note_variance=0.0, chord_stacks=False):
     """
     Generate a melodic sequence with three improvements over pure random walk:
 
@@ -397,6 +443,9 @@ def generate_random_sequence(root_note, octave, scale_type, num_notes, sound_typ
         all_notes.extend(phrase_notes)
 
     all_notes = all_notes[:num_notes]
+
+    if chord_stacks:
+        all_notes = _apply_chord_stacks(all_notes, chord_semitones)
 
     audio, _ = generate_sequence(all_notes, sound_type=sound_type, sr=sr, bpm=bpm,
                                  note_duration=note_duration,
